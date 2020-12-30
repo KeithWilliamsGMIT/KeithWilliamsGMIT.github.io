@@ -13,6 +13,6 @@ This is a static site generated using [Hugo](https://gohugo.io/) and hosted on [
 
 This site uses a custom theme. This theme has the following features:
 
-+ [Bootstrap] - CSS framework
++ [Bootstrap](https://getbootstrap.com/) - CSS framework
 + [Feather](https://feathericons.com/) - Icons
-+ [SCSS] - Custom styling
++ [SASS](https://sass-lang.com/) - Custom styling
