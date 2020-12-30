@@ -1,0 +1,5 @@
+{{ $feather := resources.Get "js/feather.min.js" }}
+<script src="{{ $feather.RelPermalink }}"></script>
+<script>
+    feather.replace()
+</script>

@@ -1,0 +1,21 @@
+#wrapper {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+    width: 100%;
+    background-color: $background-color;
+    color: $font-primary-color;
+}
+
+#content {
+    flex: 1 0 auto;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    font-weight: bold;
+}
+
+a {
+    text-decoration: none;
+    color: $font-primary-color;
+}
