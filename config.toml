@@ -2,6 +2,7 @@ baseURL = "https://KeithWilliamsGMIT.github.io/"
 languageCode = "en-us"
 title = "Keith Williams: Pages"
 theme = "pages"
+publishDir = "docs"
 
 [menu]
   [[menu.main]]
@@ -19,6 +20,9 @@ theme = "pages"
     pre = "tag"
     url = "/tags/"
     weight = 3
+
+[Permalinks]
+  posts = "/:year/:filename/"
 
 [params]
   subtitle = "A place to document some projects"
