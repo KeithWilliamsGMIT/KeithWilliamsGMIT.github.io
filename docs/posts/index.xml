@@ -6,18 +6,18 @@
     <description>Recent content in Posts on Keith Williams: Pages</description>
     <generator>Hugo -- gohugo.io</generator>
     <language>en-us</language>
-    <lastBuildDate>Wed, 30 Dec 2020 23:01:54 +0000</lastBuildDate>
+    <lastBuildDate>Sun, 17 Jan 2021 14:56:17 +0000</lastBuildDate>
     
 	<atom:link href="https://KeithWilliamsGMIT.github.io/posts/index.xml" rel="self" type="application/rss+xml" />
     
     
     <item>
-      <title>Test Post: Ignore</title>
-      <link>https://KeithWilliamsGMIT.github.io/2020/test-post-ignore/</link>
-      <pubDate>Wed, 30 Dec 2020 23:01:54 +0000</pubDate>
+      <title>Shell Script for Automating Development Setup</title>
+      <link>https://KeithWilliamsGMIT.github.io/2021/shell-script-for-automating-development-setup/</link>
+      <pubDate>Sun, 17 Jan 2021 14:56:17 +0000</pubDate>
       
-      <guid>https://KeithWilliamsGMIT.github.io/2020/test-post-ignore/</guid>
-      <description></description>
+      <guid>https://KeithWilliamsGMIT.github.io/2021/shell-script-for-automating-development-setup/</guid>
+      <description>Introduction A common frustration I have when working on side projects is that it often takes some time to set up the development environment. Every time I want to make a change it takes a few minutes to open editors and start all the services. Often I work in 30 minute to hour long stints so I don&amp;rsquo;t like wasting any time. Not alone that but after some time away from a project it can be difficult to remember all the steps to get it running.</description>
     </item>
     
   </channel>

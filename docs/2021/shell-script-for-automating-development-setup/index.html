@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html><head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" type="text/css" href="css/bootstrap.min.css">
+    
+    <link rel="stylesheet" type="text/css" href="/css/bootstrap.min.css">
+    
+    <link rel="stylesheet" type="text/css" href="/css/main.min.css">
+    
+    
+    <title>Shell Script for Automating Development Setup | Keith Williams: Pages</title>
+</head><body>
+        <div id="wrapper"><header>
+    <div id="nav-border" class="container">
+        <nav id="nav" class="nav justify-content-center">
+            
+                <a class="nav-link" href="/">
+                
+                    
+                    <i data-feather="home"></i> 
+                
+                
+                Home
+                </a>
+            
+                <a class="nav-link" href="/posts/">
+                
+                    
+                    <i data-feather="pen-tool"></i> 
+                
+                
+                Posts
+                </a>
+            
+                <a class="nav-link" href="/tags/">
+                
+                    
+                    <i data-feather="tag"></i> 
+                
+                
+                Tags
+                </a>
+            
+        </nav>
+    </div>
+</header><div id="content" class="container">
+    <h1>Shell Script for Automating Development Setup</h1>
+    <div>
+        
+
+<i data-feather="calendar"></i>
+<time datetime="2021-01-17">Jan 17, 2021</time>
+    </div>
+    <div>
+        <i data-feather="clock"></i>
+<span>10 mins</span>
+    </div>
+    <br/>
+    <h2 id="introduction">Introduction</h2>
+<p>A common frustration I have when working on side projects is that it often takes some time to set up the development environment. Every time I want to make a change it takes a few minutes to open editors and start all the services. Often I work in 30 minute to hour long stints so I don&rsquo;t like wasting any time. Not alone that but after some time away from a project it can be difficult to remember all the steps to get it running. This became such an inconvenience that I decided to automate this so that I can spend more time on development. The goal is for it to take less than one minute before I can begin working on the project.</p>
+<p>The project that will be used as an example is a standard web application with the usual three tiers: client, REST API, and database. On top of this, there is also a Keycloak service for handling authorization and authentication.</p>
+<p>In production, all of these services could be orchestrated using Kubernetes or Docker Swarm. However, for development, each of these services are run differently. The client is an Angular project and is run using <code>ng serve</code>, the REST API is a Spring Boot Gradle project and ran with <code>./gradlew bootRun</code>, the database is PostgreSQL and is a systemd service, and finally the Keycloak service is a Docker container. There are also two different editors: VS Code for the client and IntelliJ IDEA for the REST API.</p>
+<h2 id="design-considerations">Design Considerations</h2>
+<p>Initially, when deciding what to use to automate this, it was between a shell script and Ansible. These were the advantages I see with both approaches.</p>
+<p>Shell:</p>
+<ul>
+<li>Less complex</li>
+<li>Fewer dependencies</li>
+</ul>
+<p>Ansible:</p>
+<ul>
+<li>Idempotency built-in</li>
+<li>OS independent</li>
+</ul>
+<p>Ultimately, after considering my requirements, I opted for the shell script since I will be the only one using it and I wanted something as convenient as possible to run and maintain. However, that means we will have to build in some level of idempotency ourselves so, for example, if we encounter an issue while running the script we don&rsquo;t have to worry about tidying up the state of our environment before rerunning it. Or we should at least log the state so that it will be easy to debug any issues. To achieve this we will implement the below pseudocode when starting each service where we check if it is already running.</p>
+<div class="highlight"><pre style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-txt" data-lang="txt">for each service
+    if service is not running
+        start service
+    else
+        print a message
+
+for each service
+    if service had to be started
+        wait for service to be up
+        print a message
+</code></pre></div><p>We start all of the services before waiting to check if they are running. This way they can start in parallel rather than sequentially so we only have to wait for the service which takes the longest to start rather than the sum all the startup times. Although there may be some overhead is starting them all at once.</p>
+<p>There is also a strict directory structure required where all repositories are the direct children of the same parent directory as shown below.</p>
+<div class="highlight"><pre style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-txt" data-lang="txt">parent-directory
+    |_ keycloak-repo
+    |   |_ realm-export.json
+    |   |_ ...
+    |_ rest-api-repo
+    |   |_ ...
+    |_ web-client-repo
+    |   |_ ...
+    |_ my-workspace.code-workspace
+</code></pre></div><h2 id="the-script">The Script</h2>
+<p>The first part of the script we set the default values for variables, parse named arguments and set our constants. The named arguments are optional but I rather them over positional arguments. The loop for parsing named arguments was taken directly from the <a href="https://unix.stackexchange.com/a/353639">Unix Stack Exchange</a>.</p>
+<div class="highlight"><pre style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-shell" data-lang="shell"><span style="color:#75715e">#!/bin/sh
+</span><span style="color:#75715e"></span>echo <span style="color:#e6db74">&#34;</span>$@<span style="color:#e6db74">&#34;</span>
+
+<span style="color:#75715e"># Parse named arguments</span>
+ROOT_PATH<span style="color:#f92672">=</span>/home
+OPEN_EDITORS<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;true&#34;</span>
+
+<span style="color:#66d9ef">for</span> ARGUMENT in <span style="color:#e6db74">&#34;</span>$@<span style="color:#e6db74">&#34;</span>
+<span style="color:#66d9ef">do</span>
+    KEY<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>echo <span style="color:#e6db74">${</span>ARGUMENT<span style="color:#e6db74">}</span> | cut -f1 -d<span style="color:#f92672">=</span><span style="color:#66d9ef">)</span>
+    VALUE<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>echo <span style="color:#e6db74">${</span>ARGUMENT<span style="color:#e6db74">}</span> | cut -f2 -d<span style="color:#f92672">=</span><span style="color:#66d9ef">)</span>   
+
+    <span style="color:#66d9ef">case</span> <span style="color:#e6db74">&#34;</span>$KEY<span style="color:#e6db74">&#34;</span> in
+        ROOT_PATH<span style="color:#f92672">)</span>          ROOT_PATH<span style="color:#f92672">=</span><span style="color:#e6db74">${</span>VALUE<span style="color:#e6db74">}</span> ;;
+        OPEN_EDITORS<span style="color:#f92672">)</span>       OPEN_EDITORS<span style="color:#f92672">=</span><span style="color:#e6db74">${</span>VALUE<span style="color:#e6db74">}</span> ;;     
+        *<span style="color:#f92672">)</span>
+    <span style="color:#66d9ef">esac</span>
+<span style="color:#66d9ef">done</span>
+
+readonly KEYCLOAK_REPO_PATH<span style="color:#f92672">=</span><span style="color:#e6db74">${</span>ROOT_PATH<span style="color:#e6db74">}</span>/social-care-keycloak
+readonly REST_API_REPO_PATH<span style="color:#f92672">=</span><span style="color:#e6db74">${</span>ROOT_PATH<span style="color:#e6db74">}</span>/platform-rest-api
+readonly WEB_CLIENT_REPO_PATH<span style="color:#f92672">=</span><span style="color:#e6db74">${</span>ROOT_PATH<span style="color:#e6db74">}</span>/platform-web-client
+readonly IDEA_BIN_PATH<span style="color:#f92672">=</span>/snap/intellij-idea-community/current/bin
+readonly KEYCLOAK_DOCKER_NAME<span style="color:#f92672">=</span>keycloak
+readonly RQUIRED_PACKAGES<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;curl jq&#34;</span>
+</code></pre></div><p>The script requires some packages which will need to be installed if they are not already. The assumption is that the developer already has the tools to run the project installed, for example, Docker and Angular, so there&rsquo;s no point overcomplicating the script with those. Again, this section was taken straight from <a href="https://stackoverflow.com/a/10439058/3987401">Stack Overflow</a>.</p>
+<div class="highlight"><pre style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-shell" data-lang="shell"><span style="color:#75715e"># Packages</span>
+echo <span style="color:#e6db74">&#34;Installing required packages...&#34;</span>
+<span style="color:#66d9ef">for</span> i in <span style="color:#e6db74">${</span>RQUIRED_PACKAGES<span style="color:#e6db74">}</span>; <span style="color:#66d9ef">do</span>
+    PKG_OK<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>dpkg-query -W --showformat<span style="color:#f92672">=</span><span style="color:#e6db74">&#39;${Status}\n&#39;</span> <span style="color:#e6db74">${</span>i<span style="color:#e6db74">}</span> | grep <span style="color:#e6db74">&#34;install ok installed&#34;</span><span style="color:#66d9ef">)</span>
+    echo <span style="color:#e6db74">&#34;Checking for </span><span style="color:#e6db74">${</span>i<span style="color:#e6db74">}</span><span style="color:#e6db74">: </span><span style="color:#e6db74">${</span>PKG_OK<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+    <span style="color:#66d9ef">if</span> <span style="color:#f92672">[</span> <span style="color:#e6db74">&#34;&#34;</span> <span style="color:#f92672">=</span> <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>PKG_OK<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> <span style="color:#f92672">]</span>; <span style="color:#66d9ef">then</span>
+        echo <span style="color:#e6db74">&#34;+ Installing </span>$i<span style="color:#e6db74">...&#34;</span>
+        sudo apt -y install $i
+    <span style="color:#66d9ef">fi</span>
+<span style="color:#66d9ef">done</span>
+</code></pre></div><p>The next step is to check if all the repositories are cloned to the correct location. If any repository is missing a message is printed and the script is terminated.</p>
+<div class="highlight"><pre style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-shell" data-lang="shell"><span style="color:#75715e"># Repositories</span>
+echo <span style="color:#e6db74">&#34;Checking if repositories exist...&#34;</span>
+<span style="color:#66d9ef">for</span> i in <span style="color:#e6db74">${</span>KEYCLOAK_REPO_PATH<span style="color:#e6db74">}</span> <span style="color:#e6db74">${</span>REST_API_REPO_PATH<span style="color:#e6db74">}</span> <span style="color:#e6db74">${</span>WEB_CLIENT_REPO_PATH<span style="color:#e6db74">}</span>; <span style="color:#66d9ef">do</span>
+    <span style="color:#66d9ef">if</span> <span style="color:#f92672">[</span> -d <span style="color:#e6db74">${</span>i<span style="color:#e6db74">}</span> <span style="color:#f92672">]</span>
+    <span style="color:#66d9ef">then</span>
+        echo <span style="color:#e6db74">&#34;The directory </span><span style="color:#e6db74">${</span>i<span style="color:#e6db74">}</span><span style="color:#e6db74"> exists.&#34;</span>
+    <span style="color:#66d9ef">else</span>
+        echo <span style="color:#e6db74">&#34;The directory </span><span style="color:#e6db74">${</span>i<span style="color:#e6db74">}</span><span style="color:#e6db74"> does not exist...&#34;</span>
+        echo <span style="color:#e6db74">&#34;Please clone the repository to the correct location...&#34;</span>
+        echo <span style="color:#e6db74">&#34;Exiting!&#34;</span>
+        exit <span style="color:#ae81ff">0</span>
+    <span style="color:#66d9ef">fi</span>
+<span style="color:#66d9ef">done</span>
+</code></pre></div><p>We optionally open our editors if <code>OPEN_EDITORS</code> is set to true. The editors are optional since sometimes we just want to demo the project. As mentioned we&rsquo;ll open VS Code and IntelliJ IDEA. However, we won&rsquo;t bother with the same amount of checks and logging for the editors since we don&rsquo;t care what state they&rsquo;re in as long as they&rsquo;re running once the script finishes. For example, if IDEA is already running and we try to start it again the new process will simply be terminated. Also, the editors we use may change over time.</p>
+<div class="highlight"><pre style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-shell" data-lang="shell"><span style="color:#75715e"># Editors</span>
+<span style="color:#66d9ef">if</span> <span style="color:#f92672">[</span> <span style="color:#e6db74">${</span>OPEN_EDITORS<span style="color:#e6db74">}</span> <span style="color:#f92672">=</span> <span style="color:#e6db74">&#34;true&#34;</span> <span style="color:#f92672">]</span>
+<span style="color:#66d9ef">then</span>
+    echo <span style="color:#e6db74">&#34;Opening editors...&#34;</span>
+    gnome-terminal --title<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;idea&#34;</span> --working-directory<span style="color:#f92672">=</span><span style="color:#e6db74">${</span>IDEA_BIN_PATH<span style="color:#e6db74">}</span> --tab -- sh idea.sh
+    code <span style="color:#e6db74">${</span>ROOT_PATH<span style="color:#e6db74">}</span>/team-social-care.code-workspace
+<span style="color:#66d9ef">fi</span>
+</code></pre></div><p>PostgreSQL is the first service that we will start. We use cURL to check the response code of an HTTP GET request to the login page and store it for later. If the response is not a 200 OK then we need to start PostgreSQL. The other services will follow this pattern.</p>
+<div class="highlight"><pre style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-shell" data-lang="shell"><span style="color:#75715e"># PostgreSQL</span>
+POSTGRESQL_INITIAL_HTTP_CODE<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>curl -s -o /dev/null -w <span style="color:#e6db74">&#39;&#39;</span>%<span style="color:#f92672">{</span>http_code<span style="color:#f92672">}</span><span style="color:#e6db74">&#39;&#39;</span> localhost/pgadmin4/login<span style="color:#66d9ef">)</span>
+
+<span style="color:#66d9ef">if</span> <span style="color:#f92672">[</span> <span style="color:#e6db74">${</span>POSTGRESQL_INITIAL_HTTP_CODE<span style="color:#e6db74">}</span> -ne <span style="color:#ae81ff">200</span> <span style="color:#f92672">]</span>
+<span style="color:#66d9ef">then</span>
+    echo <span style="color:#e6db74">&#34;Starting PostgreSQL...&#34;</span>
+    systemctl start postgresql
+    echo <span style="color:#e6db74">&#34;PostgreSQL has started.&#34;</span>
+<span style="color:#66d9ef">else</span>
+    echo <span style="color:#e6db74">&#34;PostgreSQL is already running.&#34;</span>
+<span style="color:#66d9ef">fi</span>
+</code></pre></div><p>The next service we need to start is the Keycloak docker container. It may be easier to just start a new Docker container every time. We could use the below command similar to the one below to remove the container if it exists and then run a new one.</p>
+<div class="highlight"><pre style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-shell" data-lang="shell">docker ps -a -q --filter <span style="color:#e6db74">&#34;name=</span><span style="color:#e6db74">${</span>KEYCLOAK_DOCKER_NAME<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> | grep -q . <span style="color:#f92672">&amp;&amp;</span> docker stop <span style="color:#e6db74">${</span>KEYCLOAK_DOCKER_NAME<span style="color:#e6db74">}</span> &gt; /dev/null 2&gt;&amp;<span style="color:#ae81ff">1</span> <span style="color:#f92672">&amp;&amp;</span> docker rm -fv <span style="color:#e6db74">${</span>KEYCLOAK_DOCKER_NAME<span style="color:#e6db74">}</span> &gt; /dev/null 2&gt;&amp;<span style="color:#ae81ff">1</span>
+</code></pre></div><p>They are ephemeral after all. However, containers do take time to start up and there may already be test users already registered in an existing Keycloak container which we want to use. Therefore, we first check if a container with the name <code>keycloak</code> is running. If there isn&rsquo;t then check if a <code>keycloak</code> container has been stopped. If it&rsquo;s stopped then simply restart it. Otherwise, start a new Keycloak container. Again we store the initial state for later.</p>
+<div class="highlight"><pre style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-shell" data-lang="shell"><span style="color:#75715e"># Keycloak</span>
+KEYCLOAK_INITIAL_CONTAINER_CHECK<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>docker ps -q --filter <span style="color:#e6db74">&#34;name=</span><span style="color:#e6db74">${</span>KEYCLOAK_DOCKER_NAME<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span><span style="color:#66d9ef">)</span>
+
+<span style="color:#66d9ef">if</span> <span style="color:#f92672">[</span> <span style="color:#e6db74">${</span>KEYCLOAK_INITIAL_CONTAINER_CHECK<span style="color:#e6db74">}</span> <span style="color:#f92672">]</span>
+<span style="color:#66d9ef">then</span>
+    echo <span style="color:#e6db74">&#34;Keycloak is already running.&#34;</span>
+<span style="color:#66d9ef">else</span>
+    <span style="color:#66d9ef">if</span> <span style="color:#f92672">[</span> <span style="color:#66d9ef">$(</span>docker ps -a -q --filter <span style="color:#e6db74">&#34;name=</span><span style="color:#e6db74">${</span>KEYCLOAK_DOCKER_NAME<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span><span style="color:#66d9ef">)</span> <span style="color:#f92672">]</span>
+    <span style="color:#66d9ef">then</span>
+        echo <span style="color:#e6db74">&#34;Starting existing Keycloak...&#34;</span>
+        gnome-terminal --title<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;keycloak&#34;</span> --working-directory<span style="color:#f92672">=</span><span style="color:#e6db74">${</span>KEYCLOAK_REPO_PATH<span style="color:#e6db74">}</span> --tab -- sh -c <span style="color:#e6db74">&#34;docker start </span><span style="color:#e6db74">${</span>KEYCLOAK_DOCKER_NAME<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+    <span style="color:#66d9ef">else</span>
+        echo <span style="color:#e6db74">&#34;Starting Keycloak...&#34;</span>
+        gnome-terminal --title<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;keycloak&#34;</span> --working-directory<span style="color:#f92672">=</span><span style="color:#e6db74">${</span>KEYCLOAK_REPO_PATH<span style="color:#e6db74">}</span> --tab -- sh -c <span style="color:#e6db74">&#34;docker run -p 8081:8080 -e KEYCLOAK_USER=admin -e KEYCLOAK_PASSWORD=admin --name </span><span style="color:#e6db74">${</span>KEYCLOAK_DOCKER_NAME<span style="color:#e6db74">}</span><span style="color:#e6db74"> jboss/keycloak&#34;</span>
+    <span style="color:#66d9ef">fi</span>
+
+    echo <span style="color:#e6db74">&#34;Keycloak has started.&#34;</span>
+<span style="color:#66d9ef">fi</span>
+</code></pre></div><p>The REST API is next and is pretty straightforward. We check if port <code>8080</code> is already in use. If it is then print a message and carry on since we assume the REST API is already running, although this may not be the case. If it is not in use then start the REST API.</p>
+<div class="highlight"><pre style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-shell" data-lang="shell"><span style="color:#75715e"># REST API</span>
+REST_API_INITIAL_PORT_CHECK<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>lsof -Pi :8080 -sTCP:LISTEN -t<span style="color:#66d9ef">)</span>
+
+<span style="color:#66d9ef">if</span> <span style="color:#f92672">[</span> <span style="color:#e6db74">${</span>REST_API_INITIAL_PORT_CHECK<span style="color:#e6db74">}</span> <span style="color:#f92672">]</span>
+<span style="color:#66d9ef">then</span>
+    echo <span style="color:#e6db74">&#34;Port 8080 is in use...&#34;</span>
+    echo <span style="color:#e6db74">&#34;REST API may already be running...&#34;</span>
+    echo <span style="color:#e6db74">&#34;If not, kill process on port and retry.&#34;</span>
+<span style="color:#66d9ef">else</span>
+    echo <span style="color:#e6db74">&#34;Starting REST API...&#34;</span>
+    gnome-terminal --title<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;rest-api&#34;</span> --working-directory<span style="color:#f92672">=</span><span style="color:#e6db74">${</span>REST_API_REPO_PATH<span style="color:#e6db74">}</span> --tab -- sh -c <span style="color:#e6db74">&#39;./gradlew bootRun&#39;</span>
+    echo <span style="color:#e6db74">&#34;REST API has started.&#34;</span>
+<span style="color:#66d9ef">fi</span>
+</code></pre></div><p>The client is almost identical to the REST API where we check if the port is in use first before running the angular project.</p>
+<div class="highlight"><pre style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-shell" data-lang="shell"><span style="color:#75715e"># Web client</span>
+WEB_CLIENT_INITIAL_PORT_CHECK<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>lsof -Pi :4200 -sTCP:LISTEN -t<span style="color:#66d9ef">)</span>
+
+<span style="color:#66d9ef">if</span> <span style="color:#f92672">[</span> <span style="color:#e6db74">${</span>WEB_CLIENT_INITIAL_PORT_CHECK<span style="color:#e6db74">}</span> <span style="color:#f92672">]</span>
+<span style="color:#66d9ef">then</span>
+    echo <span style="color:#e6db74">&#34;Port 4200 is in use...&#34;</span>
+    echo <span style="color:#e6db74">&#34;Web client may already be running...&#34;</span>
+    echo <span style="color:#e6db74">&#34;If not, kill process on port and retry.&#34;</span>
+<span style="color:#66d9ef">else</span>
+    echo <span style="color:#e6db74">&#34;Starting web client...&#34;</span>
+    gnome-terminal --title<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;web-client&#34;</span> --working-directory<span style="color:#f92672">=</span><span style="color:#e6db74">${</span>WEB_CLIENT_REPO_PATH<span style="color:#e6db74">}</span> --tab -- sh -c <span style="color:#e6db74">&#39;ng serve&#39;</span>
+    echo <span style="color:#e6db74">&#34;Web client has started.&#34;</span>
+<span style="color:#66d9ef">fi</span>
+</code></pre></div><p>Now we have to wait for the services that were started to be running. We check which ones were started using the value of the initial check we stored earlier for each service. If they had to be started we can wait for them to be up. To do this we define a function that will continue to check the response code for a given URL until it gets a 200 OK. We could wait for all services regardless if they were already running or not but, for the sake of better logging, we want to determine which ones were started.</p>
+<div class="highlight"><pre style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-shell" data-lang="shell"><span style="color:#75715e"># Health check</span>
+wait_for_response<span style="color:#f92672">()</span> <span style="color:#f92672">{</span>
+    <span style="color:#66d9ef">while</span> <span style="color:#f92672">[</span> <span style="color:#e6db74">&#34;</span><span style="color:#66d9ef">$(</span>curl -s -o /dev/null -w <span style="color:#e6db74">&#39;&#39;</span>%<span style="color:#f92672">{</span>http_code<span style="color:#f92672">}</span><span style="color:#e6db74">&#39;&#39;</span> <span style="color:#e6db74">${</span>1<span style="color:#e6db74">}</span><span style="color:#66d9ef">)</span><span style="color:#e6db74">&#34;</span> -ne <span style="color:#e6db74">&#34;200&#34;</span> <span style="color:#f92672">]</span>;
+    <span style="color:#66d9ef">do</span>
+        echo <span style="color:#e6db74">&#34;Waiting for </span>$1<span style="color:#e6db74">...&#34;</span>
+        sleep 5;
+    <span style="color:#66d9ef">done</span>
+<span style="color:#f92672">}</span>
+
+<span style="color:#66d9ef">if</span> <span style="color:#f92672">[</span> <span style="color:#e6db74">${</span>POSTGRESQL_INITIAL_HTTP_CODE<span style="color:#e6db74">}</span> -ne <span style="color:#ae81ff">200</span> <span style="color:#f92672">]</span>
+<span style="color:#66d9ef">then</span>
+    wait_for_response <span style="color:#e6db74">&#34;localhost/pgadmin4/login&#34;</span>
+    echo <span style="color:#e6db74">&#34;PostgreSQL is now running.&#34;</span>
+<span style="color:#66d9ef">fi</span>
+
+<span style="color:#66d9ef">if</span> <span style="color:#f92672">[</span> -z <span style="color:#e6db74">${</span>KEYCLOAK_INITIAL_CONTAINER_CHECK<span style="color:#e6db74">}</span> <span style="color:#f92672">]</span>
+<span style="color:#66d9ef">then</span>
+    wait_for_response <span style="color:#e6db74">&#34;localhost:8081&#34;</span>
+    echo <span style="color:#e6db74">&#34;Keycloak is now running.&#34;</span>
+<span style="color:#66d9ef">fi</span>
+
+<span style="color:#66d9ef">if</span> <span style="color:#f92672">[</span> -z <span style="color:#e6db74">${</span>REST_API_INITIAL_PORT_CHECK<span style="color:#e6db74">}</span> <span style="color:#f92672">]</span>
+<span style="color:#66d9ef">then</span>
+    wait_for_response <span style="color:#e6db74">&#34;localhost:8080/swagger-ui/&#34;</span>
+    echo <span style="color:#e6db74">&#34;REST API is now running.&#34;</span>
+<span style="color:#66d9ef">fi</span>
+
+<span style="color:#66d9ef">if</span> <span style="color:#f92672">[</span> -z <span style="color:#e6db74">${</span>WEB_CLIENT_INITIAL_PORT_CHECK<span style="color:#e6db74">}</span> <span style="color:#f92672">]</span>
+<span style="color:#66d9ef">then</span>
+    wait_for_response <span style="color:#e6db74">&#34;localhost:4200&#34;</span>
+    echo <span style="color:#e6db74">&#34;Web client is now running.&#34;</span>
+<span style="color:#66d9ef">fi</span>
+</code></pre></div><p>The last step is to do any post start up tasks. We only have two. The first is to import our custom realm into Keycloak which involves using cURL to get an access token for our admin user and using that to send a realm JSON file to Keycloaks REST API now that the container is up. If an existing Keycloak container was started it may already have the realm imported so we may not get a 200 response but it should not cause any issues. The second is to open the URL for the Angular application in a browser.</p>
+<div class="highlight"><pre style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-shell" data-lang="shell"><span style="color:#75715e"># Post start up</span>
+echo <span style="color:#e6db74">&#34;Importing realm settings...&#34;</span>
+access_token<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>curl -s -X POST http://localhost:8081/auth/realms/master/protocol/openid-connect/token -H <span style="color:#e6db74">&#39;Content-Type: application/x-www-form-urlencoded&#39;</span> -d <span style="color:#e6db74">&#39;grant_type=password&#39;</span> -d <span style="color:#e6db74">&#39;client_id=admin-cli&#39;</span> -d <span style="color:#e6db74">&#39;username=admin&#39;</span> -d <span style="color:#e6db74">&#39;password=admin&#39;</span> | jq --raw-output <span style="color:#e6db74">&#39;.access_token&#39;</span><span style="color:#66d9ef">)</span>
+import_realm_response<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>curl -s -o /dev/null -w <span style="color:#e6db74">&#39;&#39;</span>%<span style="color:#f92672">{</span>http_code<span style="color:#f92672">}</span><span style="color:#e6db74">&#39;&#39;</span> -X POST http://localhost:8081/auth/admin/realms -H <span style="color:#e6db74">&#34;Authorization: bearer </span><span style="color:#e6db74">${</span>access_token<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> -H <span style="color:#e6db74">&#39;Content-Type: application/json&#39;</span> -d <span style="color:#e6db74">&#34;@</span><span style="color:#e6db74">${</span>ROOT_PATH<span style="color:#e6db74">}</span><span style="color:#e6db74">/social-care-keycloak/realm-export.json&#34;</span><span style="color:#66d9ef">)</span>
+echo <span style="color:#e6db74">&#34;Import realm response code: </span><span style="color:#e6db74">${</span>import_realm_response<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+
+xdg-open http://localhost:4200
+
+echo <span style="color:#e6db74">&#34;Finished!&#34;</span>
+</code></pre></div><h2 id="going-further">Going Further</h2>
+<p>We can make this even easier for ourselves by creating a desktop shortcut that will run this script with predefined arguments as they aren&rsquo;t likely to change very often. There are a lot of examples of how to do this online. First, we need to create a <code>.desktop</code> file with the command we want to run along with a few more properties.</p>
+<div class="highlight"><pre style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-txt" data-lang="txt">[Desktop Entry]
+Type=Application
+Terminal=true
+Name=social-care
+Icon=/home/me/repos/script/icon.svg
+Exec=/home/me/repos/script/setup.sh ROOT_PATH=/home/me/repos
+</code></pre></div><p>Rather than explaining how to make it executable, you can follow the steps in this <a href="https://askubuntu.com/a/1256301/926763">answer</a> since that&rsquo;s what helped me. After making it executable you should be able to launch your development environment by simply clicking a desktop icon.</p>
+<h2 id="results">Results</h2>
+<p>To test the execution speed of the script all of the services, except PostgreSQL, were terminated and the Keycloak Docker container was removed. The dependencies were still installed. The <code>time</code> command was used to give a rough measure of how long the script took to run, although this can vary.</p>
+<div class="highlight"><pre style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-txt" data-lang="txt">me@ubuntu:~/repos$ time sh setup.sh ROOT_PATH=/home/me/repos/
+ROOT_PATH=/home/me/repos/
+Installing required packages...
+Checking for curl: install ok installed
+Checking for jq: install ok installed
+Checking if repositories exist...
+The directory /home/me/repos/keycloak-repo exists.
+The directory /home/me/repos/rest-api-repo exists.
+The directory /home/me/repos/web-client-repo exists.
+Opening editors...
+PostgreSQL is already running.
+Starting Keycloak...
+Keycloak has started.
+Starting REST API...
+REST API has started.
+Starting web client...
+Web client has started.
+Waiting for localhost:8081...
+Waiting for localhost:8081...
+Waiting for localhost:8081...
+Waiting for localhost:8081...
+Waiting for localhost:8081...
+Keycloak is now running.
+REST API is now running.
+Waiting for localhost:4200...
+Web client is now running.
+Importing realm settings...
+Import realm response code: 201
+Finished!
+
+real    1m43.760s
+user    0m1.639s
+sys     0m0.407s
+</code></pre></div><p>In this case, the script took approximately 1 minute 43 seconds. To put that into perspective, running these steps manually took 3 minutes 4 seconds, keeping in mind that is not my first time running through this manually. I&rsquo;ve had a lot of practice. In total it took 1 minute 21 seconds less and saved a lot of clicking and typing.</p>
+<h2 id="conclusion">Conclusion</h2>
+<p>Putting it all together the script is approximately 160 lines long. However, a lot of those are printing messages. Ultimately, the number of checks and logging is up to you.</p>
+<p>Unfortunately, it didn&rsquo;t hit the sub one minute goal. The Keycloak container is by far the slowest service to start, however, we may not need, or want, to start that every time. I&rsquo;m not very familiar with writing shell scripts so there may be room for further optimisations but it will do for now.</p>
+<p>We were able to build some level of idempotency into the script so that we don&rsquo;t have to worry about the state of the environment. If some services are already running then we skip them and print a message to let us know what exactly has changed.</p>
+<p>This script likely won&rsquo;t suit your setup but it&rsquo;s not meant to. It&rsquo;s meant to serve as an example of how you can easily automate your own. Hopefully, you can take some principles from this and apply them to your projects.</p>
+
+    
+    <i data-feather="tag"></i>
+    
+        
+        <a class="btn btn-sm btn-outline-dark tag-btn" href="https://KeithWilliamsGMIT.github.io/tags/shell">shell</a>
+    
+        
+        <a class="btn btn-sm btn-outline-dark tag-btn" href="https://KeithWilliamsGMIT.github.io/tags/unix">unix</a>
+    
+        
+        <a class="btn btn-sm btn-outline-dark tag-btn" href="https://KeithWilliamsGMIT.github.io/tags/workflow">workflow</a>
+    
+
+
+            </div><footer>
+    <p class="footer">&copy; 2021 Keith Williams</p>
+</footer>
+<script src="/js/feather.min.js"></script>
+<script>
+    feather.replace()
+</script></div>
+    </body>
+</html>
