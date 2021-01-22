@@ -3,6 +3,7 @@ languageCode = "en-us"
 title = "Keith Williams: Pages"
 theme = "pages"
 publishDir = "docs"
+googleAnalytics = "G-TMHTGJLRWV"
 
 [menu]
   [[menu.main]]
